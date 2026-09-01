@@ -320,7 +320,7 @@ tsumiki は Windows に常駐するローカル完結型のタスク管理ツー
 ## 出典
 
 - 土台: [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md) の Notion DESIGN.md
-  （MIT License / Copyright (c) 2026 VoltAgent。許諾文の全文はリポジトリ直下の `LICENSE` に収録）
+  （MIT License / Copyright (c) 2026 VoltAgent。許諾文の全文はリポジトリ直下の `NOTICE.md` に収録）
 - Inspired by [Notion](https://notion.so)。商標・ブランド資産は Notion Labs, Inc. に帰属する
 - フォント: [Inter](https://rsms.me/inter/)（SIL OFL）/ [Noto Sans JP](https://fonts.google.com/noto/specimen/Noto+Sans+JP)（SIL OFL）/ [JetBrains Mono](https://www.jetbrains.com/lp/mono/)（SIL OFL）
 
