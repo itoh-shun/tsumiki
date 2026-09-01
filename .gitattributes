@@ -1,0 +1,11 @@
+# 改行コードは常に LF で正規化する。
+# app/ を Windows 側（C:\dev\tsumiki）でビルドする都合上、
+# 片側の git が CRLF を付けてしまうと DESIGN.md や service/ まで
+# 巻き込んで全ファイルが書き換わるため、リポジトリ側で固定する。
+* text=auto eol=lf
+
+# バイナリは変換対象外
+*.png binary
+*.ico binary
+*.icns binary
+*.db  binary

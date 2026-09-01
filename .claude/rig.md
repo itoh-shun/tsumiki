@@ -12,7 +12,7 @@ test: "cd service && uv run pytest"
 
 # ── ブランチ & CI 戦略 ────────────────────────────────────
 branch:
-  base: "master"
+  base: "main"
   naming: ""
   ci: ""
 
