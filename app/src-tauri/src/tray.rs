@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub struct TrayState {
     pub paused: AtomicBool,
@@ -86,6 +86,7 @@ fn show_and_focus(app: &AppHandle) {
             Ok(()) => tracing::info!("show_and_focus: set_focus() 成功"),
             Err(e) => tracing::error!("show_and_focus: set_focus() 失敗: {e}"),
         }
+        notify_list_opened(&w);
     } else {
         tracing::error!("show_and_focus: main ウィンドウが見つからない");
     }
@@ -108,8 +109,18 @@ pub fn toggle_main_window(app: &AppHandle) {
                 Err(e) => tracing::error!("toggle_main_window: show() 失敗: {e}"),
             }
             let _ = w.set_focus();
+            notify_list_opened(&w);
         }
     } else {
         tracing::error!("toggle_main_window: main ウィンドウが見つからない");
+    }
+}
+
+/// 一覧ウィンドウは show()/hide() を繰り返すだけで React コンポーネントは
+/// マウントされ直されない（捕捉小窓の hotkey.rs::notify_opened と同じ理由）。
+/// 表示されるたびにフロントエンドへ知らせ、最新のタスク一覧を取り直させる。
+fn notify_list_opened(w: &tauri::WebviewWindow) {
+    if let Err(e) = w.emit("list-opened", ()) {
+        tracing::error!("list-opened イベントの発行に失敗: {e}");
     }
 }
