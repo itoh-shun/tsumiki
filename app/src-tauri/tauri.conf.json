@@ -16,7 +16,7 @@
         "title": "tsumiki",
         "width": 480,
         "height": 720,
-        "visible": true,
+        "visible": false,
         "decorations": true,
         "resizable": true
       }
