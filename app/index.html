@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>tsumiki</title>
+    <style>
+      /*
+        捕捉小窓は transparent: true で作るため、角丸カードの外側が
+        白い矩形として見えないよう html/body/#root を透明にしておく。
+        通常のメインウィンドウ側は透明でなくても支障はない。
+      */
+      html,
+      body,
+      #root {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: transparent;
+      }
+    </style>
   </head>
 
   <body>

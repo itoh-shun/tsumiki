@@ -157,7 +157,7 @@ tsumiki は Windows に常駐するローカル完結型のタスク管理ツー
 
 #### 捕捉小窓（Capture Window）
 
-呼び出し: `Ctrl + Shift + Space`。他のアプリの上に出る。
+呼び出し: `Alt + Shift + Space`。他のアプリの上に出る。左手だけで押せることを優先した。
 
 - 幅 720px 固定、高さは内容依存（最小 96px）
 - bg `#ffffff` / border Whisper / radius 16px / **Deep Shadow**
@@ -325,6 +325,12 @@ tsumiki は Windows に常駐するローカル完結型のタスク管理ツー
 - フォント: [Inter](https://rsms.me/inter/)（SIL OFL）/ [Noto Sans JP](https://fonts.google.com/noto/specimen/Noto+Sans+JP)（SIL OFL）/ [JetBrains Mono](https://www.jetbrains.com/lp/mono/)（SIL OFL）
 
 ## 変更履歴
+
+- 2026-09-02: 捕捉小窓の呼び出しを `Ctrl + Shift + Space` から `Alt + Shift + Space` へ変更。
+  実機で `Ctrl + Shift + Space` が他アプリに取られており登録できなかった。
+  `Ctrl + Alt + Space` と `Win + Shift + Space` も同様に埋まっていたため、
+  空いていた候補のうち**左手だけで押せる**ものを選んだ。捕捉は思いついた瞬間に
+  押すものなので、両手を要するキーだとその一手間で思考が途切れる。
 
 - 2026-09-01: 土台を Linear（暗色ネイティブ）から Notion（温かい明色）へ変更。
   「明るくフレンドリーに」という要件は配色の差し替えでは満たせず、設計思想ごと入れ替えたため。
