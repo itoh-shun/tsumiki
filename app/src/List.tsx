@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { fetch } from "@tauri-apps/plugin-http";
@@ -13,8 +14,11 @@ import {
 } from "./theme";
 
 // tsumiki 一覧ウィンドウ（DESIGN.md §4「一覧ウィンドウ（List Window）」
-// 「タスク行（Task Row）」）。T17: 読んで見せるところまで。行クリックによる
-// 状態変更・完了・削除は T18。
+// 「タスク行（Task Row）」）。
+// T17: 読んで見せるところまで。
+// T18: 行の操作（完了トグル・状態を移す・削除）を追加。
+// 遷移の許可表は service/app/models.py の ALLOWED_TRANSITIONS が唯一の定義。
+// フロントには書き写さず、GET /meta/transitions を都度読む。
 
 const CONNECTION_ERROR_MESSAGE =
   "サービスに繋がりません。tsumiki-service が起動しているか確認してください。";
@@ -26,6 +30,16 @@ interface Task {
   state: TaskState;
   updated_at: string;
 }
+
+type TransitionTable = Record<TaskState, TaskState[]>;
+
+const EMPTY_TRANSITIONS: TransitionTable = {
+  inbox: [],
+  next: [],
+  waiting: [],
+  someday: [],
+  done: [],
+};
 
 async function getBaseUrl(): Promise<string> {
   return await invoke<string>("service_base_url");
@@ -39,6 +53,31 @@ async function fetchTasks(base: string, state: TaskState | null): Promise<Task[]
   }
   const data = (await res.json()) as unknown;
   return Array.isArray(data) ? (data as Task[]) : [];
+}
+
+// GET /meta/transitions（models.py の ALLOWED_TRANSITIONS をそのまま JSON 化した
+// もの）を読む。壊れた・想定外の形で返ってきた場合は「遷移なし」扱いにする。
+// 許可されていない遷移を誤って出すより、メニューが空になる方がずっと安全。
+async function fetchTransitions(base: string): Promise<TransitionTable> {
+  const res = await fetch(`${base}/meta/transitions`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`http_error:${res.status}`);
+  }
+  const data = (await res.json()) as unknown;
+  const result: TransitionTable = { ...EMPTY_TRANSITIONS };
+  if (!data || typeof data !== "object") return result;
+  for (const state of STATE_ORDER) {
+    const v = (data as Record<string, unknown>)[state];
+    if (Array.isArray(v)) {
+      result[state] = v.filter((s): s is TaskState =>
+        (STATE_ORDER as string[]).includes(s as string),
+      );
+    }
+  }
+  return result;
 }
 
 function computeCounts(all: Task[]): Record<TaskState, number> {
@@ -72,14 +111,37 @@ function formatRelativeTime(iso: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
+// POST/PATCH/DELETE が失敗したときの日本語メッセージを組み立てる。
+// 409（InvalidTransition・整合性エラー）はサーバ側が既に日本語の説明文
+// （detail.message）を返すので、それをそのまま使う。他人のライブラリや
+// サーバの不具合を私の側で言い換えて誤らせない。
+async function describeError(res: Response): Promise<string> {
+  try {
+    const data = (await res.json()) as unknown;
+    if (data && typeof data === "object" && "detail" in data) {
+      const detail = (data as { detail: unknown }).detail;
+      if (detail && typeof detail === "object" && "message" in detail) {
+        const message = (detail as { message: unknown }).message;
+        if (typeof message === "string") return message;
+      }
+      if (typeof detail === "string") return detail;
+    }
+  } catch {
+    // JSON で返ってこなかった場合は下のフォールバックへ。
+  }
+  return `送信に失敗しました（サービスがエラーを返しました: ${res.status}）`;
+}
+
 export default function List() {
   const [selectedState, setSelectedState] = useState<TaskState | null>(null);
   const [rows, setRows] = useState<Task[]>([]);
   const [counts, setCounts] = useState<Record<TaskState, number> | null>(null);
+  const [transitions, setTransitions] = useState<TransitionTable | null>(null);
   const [connectionError, setConnectionError] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [selectedRowId, setSelectedRowId] = useState<number | null>(null);
   const [connectionTarget, setConnectionTarget] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // list-opened はフォーカスの出入りなどで短時間に複数回飛ぶことがあり得る。
   // 古い応答が新しい応答より後に届いて上書きしないよう、直近の呼び出しだけを
@@ -88,6 +150,7 @@ export default function List() {
   // list-opened イベントのハンドラは購読時点の selectedState を古いまま
   // 閉じ込めてしまう（stale closure）ため、常に最新値を ref で持つ。
   const selectedStateRef = useRef<TaskState | null>(null);
+  const actionErrorTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     selectedStateRef.current = selectedState;
@@ -107,6 +170,15 @@ export default function List() {
         if (refreshTokenRef.current !== token) return;
         setRows(displayRows);
         setConnectionError(false);
+
+        // 遷移許可表も一覧と同じタイミングで取り直す。サービス起動直後など
+        // 初回取得に失敗していても、次に開いたときに自然に回復する。
+        try {
+          const t = await fetchTransitions(base);
+          if (refreshTokenRef.current === token) setTransitions(t);
+        } catch (e) {
+          console.error("failed to refresh allowed transitions", e);
+        }
       } catch (e) {
         if (refreshTokenRef.current !== token) return;
         console.error("failed to refresh task list", e);
@@ -151,6 +223,84 @@ export default function List() {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    return () => {
+      if (actionErrorTimerRef.current !== null) {
+        window.clearTimeout(actionErrorTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showActionError = useCallback((message: string) => {
+    setActionError(message);
+    if (actionErrorTimerRef.current !== null) {
+      window.clearTimeout(actionErrorTimerRef.current);
+    }
+    actionErrorTimerRef.current = window.setTimeout(() => {
+      setActionError(null);
+    }, 5000);
+  }, []);
+
+  // 行の操作（完了トグル・状態を移す・削除）の共通経路。
+  // 楽観的更新はしない: 行を先に書き換えず、成功したときだけ一覧を取り直す。
+  // こうすると「失敗したら元に戻す」ロールバックの作り込みが要らない
+  // （成功する前に何も変えていないので、失敗時は何もしなければ既に正しい）。
+  const runMutation = useCallback(
+    async (send: (base: string) => Promise<Response>) => {
+      try {
+        const base = await getBaseUrl();
+        const res = await send(base);
+        if (!res.ok) {
+          showActionError(await describeError(res));
+          return;
+        }
+        setActionError(null);
+        refresh(selectedStateRef.current);
+      } catch (e) {
+        console.error("action failed", e);
+        showActionError(CONNECTION_ERROR_MESSAGE);
+      }
+    },
+    [refresh, showActionError],
+  );
+
+  const toggleComplete = useCallback(
+    (task: Task) => {
+      void runMutation((base) =>
+        task.state === "done"
+          ? fetch(`${base}/tasks/${task.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ state: "inbox" }),
+            })
+          : fetch(`${base}/tasks/${task.id}/complete`, { method: "POST" }),
+      );
+    },
+    [runMutation],
+  );
+
+  const changeTaskState = useCallback(
+    (task: Task, dest: TaskState) => {
+      void runMutation((base) =>
+        fetch(`${base}/tasks/${task.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state: dest }),
+        }),
+      );
+    },
+    [runMutation],
+  );
+
+  const deleteTask = useCallback(
+    (task: Task) => {
+      void runMutation((base) =>
+        fetch(`${base}/tasks/${task.id}`, { method: "DELETE" }),
+      );
+    },
+    [runMutation],
+  );
+
   const toggleState = useCallback((state: TaskState) => {
     setSelectedState((prev) => (prev === state ? null : state));
   }, []);
@@ -165,10 +315,13 @@ export default function List() {
         操作可能な要素すべてに focus outline を付ける（DESIGN.md §4/§7）。
         インライン style では :focus-visible を指定できないためここで。
         Capture.tsx の入力欄と違い、ここは outline を消さない。
+        ポップオーバー（.tsumiki-popover）は document.body への portal で
+        描画するため、.tsumiki-list-card の子孫にならない。別ルールで拾う。
       */}
       <style>{`
         .tsumiki-list-card button:focus-visible,
-        .tsumiki-list-row:focus-visible {
+        .tsumiki-list-row:focus-visible,
+        .tsumiki-popover button:focus-visible {
           outline: 2px solid #a8620f;
           outline-offset: -2px;
         }
@@ -271,6 +424,34 @@ export default function List() {
             </div>
           </header>
 
+          {actionError && (
+            <button
+              type="button"
+              onClick={() => setActionError(null)}
+              style={{
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "10px 18px",
+                border: "none",
+                borderBottom: "1px solid rgba(0,0,0,0.06)",
+                background: "transparent",
+                cursor: "pointer",
+                textAlign: "left",
+                fontFamily: "inherit",
+                fontFeatureSettings: "inherit",
+                fontSize: 13,
+                fontWeight: 400,
+                lineHeight: 1.43,
+                color: "#615d59",
+              }}
+            >
+              <WarningIcon />
+              <span>{actionError}</span>
+            </button>
+          )}
+
           <div
             style={{
               flex: 1,
@@ -289,7 +470,11 @@ export default function List() {
                   task={task}
                   isLast={i === rows.length - 1}
                   selected={selectedRowId === task.id}
+                  destinations={transitions ? transitions[task.state] : []}
                   onToggleSelect={() => toggleRowSelection(task.id)}
+                  onToggleComplete={() => toggleComplete(task)}
+                  onChangeState={(dest) => changeTaskState(task, dest)}
+                  onDelete={() => deleteTask(task)}
                 />
               ))
             )}
@@ -353,6 +538,26 @@ function StatusLine({ text }: { text: string }) {
   );
 }
 
+// Capture.tsx のエラー表示と同じ意匠（円 + 縦棒 + 点）。新しい色相は足さず
+// #a8620f（アクセント文字色）を使う。
+function WarningIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <circle cx="7" cy="7" r="6" stroke="#a8620f" strokeWidth="1.4" />
+      <path d="M7 4V7.5" stroke="#a8620f" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="7" cy="9.8" r="0.9" fill="#a8620f" />
+    </svg>
+  );
+}
+
 function StateChip({
   state,
   active,
@@ -400,22 +605,52 @@ function TaskRow({
   task,
   isLast,
   selected,
+  destinations,
   onToggleSelect,
+  onToggleComplete,
+  onChangeState,
+  onDelete,
 }: {
   task: Task;
   isLast: boolean;
   selected: boolean;
+  destinations: TaskState[];
   onToggleSelect: () => void;
+  onToggleComplete: () => void;
+  onChangeState: (dest: TaskState) => void;
+  onDelete: () => void;
 }) {
   const [hover, setHover] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const isDone = task.state === "done";
 
+  const openMenu = () => setMenuOpen(true);
+  const closeMenu = () => setMenuOpen(false);
+
+  const onIconClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onToggleComplete();
+  };
+
+  const onMenuButtonClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    openMenu();
+  };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    // 行はまだクリックしても状態変更などは起きない（T18 で実装）。
-    // 見た目上の選択トグルだけはキーボードからも到達できるようにしておく。
-    if (e.key !== "Enter" && e.key !== " ") return;
-    e.preventDefault();
-    onToggleSelect();
+    if (e.key === "Enter") {
+      // 見た目上の選択トグル（T17 から引き継ぎ。今のところ副作用はない）。
+      e.preventDefault();
+      onToggleSelect();
+    } else if (e.key === " ") {
+      e.preventDefault();
+      onToggleComplete();
+    } else if (e.key === "Delete") {
+      // いきなり削除しない。「…」メニューを開くだけ。
+      e.preventDefault();
+      openMenu();
+    }
   };
 
   return (
@@ -428,6 +663,7 @@ function TaskRow({
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
+        position: "relative",
         display: "flex",
         alignItems: "center",
         gap: 14,
@@ -453,7 +689,22 @@ function TaskRow({
         }}
         aria-hidden="true"
       />
-      <StateIcon done={isDone} />
+      <button
+        type="button"
+        onClick={onIconClick}
+        aria-label={isDone ? "完了を取り消す" : "完了にする"}
+        style={{
+          display: "flex",
+          flexShrink: 0,
+          padding: 0,
+          border: "none",
+          background: "transparent",
+          cursor: "pointer",
+          borderRadius: 9999,
+        }}
+      >
+        <StateIcon done={isDone} />
+      </button>
       <div
         style={{
           flex: 1,
@@ -488,6 +739,46 @@ function TaskRow({
           {formatRelativeTime(task.updated_at)} · {STATE_LABELS[task.state]}
         </span>
       </div>
+      <button
+        ref={menuButtonRef}
+        type="button"
+        onClick={onMenuButtonClick}
+        aria-label="操作メニュー"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        style={{
+          position: "absolute",
+          right: 12,
+          top: "50%",
+          transform: "translateY(-50%)",
+          width: 28,
+          height: 28,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          border: "none",
+          borderRadius: 4,
+          background: hover || menuOpen ? "rgba(0,0,0,0.05)" : "transparent",
+          cursor: "pointer",
+          opacity: hover || menuOpen ? 1 : 0,
+          pointerEvents: hover || menuOpen ? "auto" : "none",
+          color: "#615d59",
+          fontSize: 18,
+          fontWeight: 700,
+          lineHeight: 1,
+        }}
+      >
+        …
+      </button>
+      {menuOpen && menuButtonRef.current && (
+        <TaskMenu
+          anchorRect={menuButtonRef.current.getBoundingClientRect()}
+          destinations={destinations}
+          onSelectState={onChangeState}
+          onDelete={onDelete}
+          onClose={closeMenu}
+        />
+      )}
     </div>
   );
 }
@@ -527,5 +818,140 @@ function StateIcon({ done }: { done: boolean }) {
     >
       <circle cx="9" cy="9" r="8" stroke="#a39e98" strokeWidth="1.6" />
     </svg>
+  );
+}
+
+const POPOVER_WIDTH = 180;
+
+// 行の「…」から開くポップオーバー。document.body への portal で描画する
+// （カードの overflow:hidden や行のスクロール領域に切り取られないため）。
+function TaskMenu({
+  anchorRect,
+  destinations,
+  onSelectState,
+  onDelete,
+  onClose,
+}: {
+  anchorRect: DOMRect;
+  destinations: TaskState[];
+  onSelectState: (dest: TaskState) => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const onDocKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onDocKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onDocKeyDown);
+    };
+  }, [onClose]);
+
+  const itemStyle: CSSProperties = {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    padding: "8px 12px",
+    border: "none",
+    background: "transparent",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontFeatureSettings: "inherit",
+    fontSize: 13,
+    fontWeight: 600,
+    lineHeight: 1.33,
+    color: "rgba(0,0,0,0.95)",
+  };
+
+  return createPortal(
+    <div
+      ref={popoverRef}
+      className="tsumiki-popover"
+      role="menu"
+      style={{
+        position: "fixed",
+        top: anchorRect.bottom + 4,
+        left: Math.max(8, anchorRect.right - POPOVER_WIDTH),
+        width: POPOVER_WIDTH,
+        background: "#ffffff",
+        border: "1px solid rgba(0,0,0,0.1)",
+        borderRadius: 8,
+        boxShadow: SOFT_CARD_SHADOW,
+        overflow: "hidden",
+        fontFamily: FONT_STACK,
+        fontFeatureSettings: '"lnum"',
+        zIndex: 1000,
+        padding: "4px 0",
+      }}
+    >
+      {destinations.map((dest) => (
+        <MenuItem
+          key={dest}
+          label={`${STATE_LABELS[dest]}へ`}
+          itemStyle={itemStyle}
+          onClick={() => {
+            onSelectState(dest);
+            onClose();
+          }}
+        />
+      ))}
+      {destinations.length > 0 && (
+        <div
+          style={{ height: 1, background: "rgba(0,0,0,0.06)", margin: "4px 0" }}
+          aria-hidden="true"
+        />
+      )}
+      <MenuItem
+        label={confirmingDelete ? "本当に削除" : "削除"}
+        itemStyle={{
+          ...itemStyle,
+          color: confirmingDelete ? "#a8620f" : "rgba(0,0,0,0.95)",
+        }}
+        onClick={() => {
+          if (confirmingDelete) {
+            onDelete();
+            onClose();
+          } else {
+            setConfirmingDelete(true);
+          }
+        }}
+      />
+    </div>,
+    document.body,
+  );
+}
+
+function MenuItem({
+  label,
+  itemStyle,
+  onClick,
+}: {
+  label: string;
+  itemStyle: CSSProperties;
+  onClick: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{ ...itemStyle, background: hover ? "rgba(0,0,0,0.03)" : "transparent" }}
+    >
+      {label}
+    </button>
   );
 }

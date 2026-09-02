@@ -26,6 +26,29 @@ async def test_health(client):
     assert resp.json() == {"status": "ok", "version": "0.1.0"}
 
 
+async def test_transitions_matches_allowed_transitions_table(client):
+    # B: 遷移の許可表は models.py の ALLOWED_TRANSITIONS が唯一の定義。
+    # /meta/transitions のレスポンスがそこから生成されていること(表の複製に
+    # ずれが出ていないこと)を、表そのものと突き合わせて検証する。表を変えたら
+    # このテストが自動で追随する。
+    from app.models import ALLOWED_TRANSITIONS, State
+
+    resp = await client.get("/meta/transitions")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    expected = {
+        src.value: sorted(d.value for d in ALLOWED_TRANSITIONS.get(src, frozenset()))
+        for src in State
+    }
+    actual = {k: sorted(v) for k, v in body.items()}
+    assert actual == expected
+
+    # done からは inbox / next にしか戻せない、という最も踏み外しやすい制約は
+    # 名指しでも確認しておく。
+    assert sorted(body["done"]) == ["inbox", "next"]
+
+
 async def test_untrusted_host_header_is_rejected(client):
     # A2: DNS rebinding 対策。TrustedHostMiddleware が既知でない Host を 400 で弾くこと
     resp = await client.get("/health", headers={"Host": "evil.example.com"})

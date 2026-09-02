@@ -167,6 +167,20 @@ async def health() -> dict:
     return {"status": "ok", "version": VERSION}
 
 
+@app.get("/meta/transitions")
+async def transitions() -> dict[str, list[str]]:
+    """状態遷移の許可表を読み取り専用で返す。
+
+    `ALLOWED_TRANSITIONS`(models.py)が唯一の定義であり続けるよう、ここでは
+    表を書き写さずそのまま JSON 化するだけにする。フロントエンドはこれを見て
+    出せる遷移だけをメニューに出す(表の複製を持たない)。
+    """
+    return {
+        src.value: [d.value for d in list(State) if d in ALLOWED_TRANSITIONS.get(src, frozenset())]
+        for src in State
+    }
+
+
 # --- tasks --------------------------------------------------------------
 
 
