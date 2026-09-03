@@ -3,6 +3,7 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tokio::sync::Mutex as AsyncMutex;
 
 mod hotkey;
+mod logging;
 mod service_mgr;
 mod tray;
 
@@ -37,8 +38,6 @@ fn hide_capture(window: tauri::WebviewWindow) {
 }
 
 pub fn run() {
-    tracing_subscriber::fmt::init();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             tray::toggle_main_window(app);
@@ -61,6 +60,30 @@ pub fn run() {
         .manage(hotkey::CaptureFocusGuard::default())
         .manage(AsyncMutex::new(Option::<service_mgr::ServiceHandle>::None))
         .setup(|app| {
+            // ログ初期化はここが最速のタイミング（app_log_dir() の解決に
+            // AppHandle が要るため、tauri::Builder::run() より前には呼べない）。
+            // setup の以降の処理・invoke_handler・on_window_event の tracing 呼び出しは
+            // すべてこの後に実行されるため、ログの取りこぼしは無い。
+            // guard は app に管理させ、アプリの生存期間ずっと保持する
+            // （drop すると non-blocking writer のバッファが書き出されないまま消える）。
+            //
+            // 初期化に失敗しても（ディスクフル・権限無し等）アプリの起動は止めない。
+            // ログは道具であってアプリの目的ではなく、タスクを捕捉できることの方が優先。
+            // ただし失敗を握り潰さない: 開発時はコンソール（eprintln!）に出す。
+            // リリースはコンソールが無く伝える手段が無いため、ここは諦める
+            // （ログ自体が壊れている場合だけは、ログでは伝えられない）。
+            match logging::init(app) {
+                Ok(guard) => {
+                    app.manage(guard);
+                }
+                Err(e) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("ログ初期化に失敗しました（アプリは続行します）: {e}");
+                    #[cfg(not(debug_assertions))]
+                    let _ = e; // リリースはコンソールが無く伝える手段が無いため諦める
+                }
+            }
+
             // 起動時の非表示は tauri.conf.json の visible: false に一本化。
             // ここで重ねて hide() すると一瞬表示されてから消えることがあるため。
             tray::build_tray(app.handle())?;

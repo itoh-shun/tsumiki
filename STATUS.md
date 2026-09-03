@@ -122,6 +122,33 @@ MCP は user スコープで登録済み（`uv --directory /home/itoshun/works/t
 - **Windows 側と WSL2 側で同じリポジトリを触ると改行が壊れる。** `.gitattributes` で
   LF に固定して構造的に防いだ。`/mnt/c` 配下で `git add`/`commit` はしない
 
+## 常用のしかた
+
+リリースビルドは `C:\dev\tsumiki\app` で `pnpm tauri build`。成果物:
+
+```
+src-tauri/target/release/bundle/msi/tsumiki_0.1.0_x64_en-US.msi    5.3 MB
+src-tauri/target/release/bundle/nsis/tsumiki_0.1.0_x64-setup.exe   3.8 MB
+src-tauri/target/release/app.exe                                  15.8 MB
+```
+
+**ログは `%LOCALAPPDATA%\dev.itoshun.tsumiki\logs\tsumiki.YYYY-MM-DD.log`。**
+日次ローテーション・14日保持。既定は `info`、`RUST_LOG` で上書きできる。
+リリースビルドはコンソールを持たないので、**障害を追う手段はこのファイルだけ**。
+
+## 分かっていて直していないこと
+
+直す価値が出るまで手を付けない、と決めたもの。**バグではなく、判断の記録。**
+
+- **`service_mgr.rs` の `service_cmd` は絶対パスのハードコード**
+  （`uv --directory /home/itoshun/works/tsumiki/service run tsumiki-service`）。
+  実行ファイルからの相対ではないので、リポジトリを別の場所に置くと動かない。
+  `TSUMIKI_SERVICE_CMD` で上書きできることは実測済み。
+  **今直さない理由**: 直すには「実行ファイルからの相対」か「設定ファイル」かの設計判断が要り、
+  それは配布を考える段になって初めて意味を持つ。今の目的は自分のマシンで常用すること
+- **リリースビルドでは WebView2 の devtools が無効**（`devtools` フィーチャ未指定）。
+  配布物で開発者ツールが開ける方が望ましくないので、**そのままにする**
+
 ## 次の一手
 
 **一覧ウィンドウ**（`DESIGN.md` の「一覧ウィンドウ」「タスク行」）。メインウィンドウは今
