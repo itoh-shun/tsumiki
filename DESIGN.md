@@ -177,6 +177,18 @@ tsumiki は Windows に常駐するローカル完結型のタスク管理ツー
 - **積み木の比喩をここ以外に持ち込まない。** カードをブロック状に並べたり、
   角丸を過剰にしたりしない。
 
+#### アプリアイコン（App Icon）
+
+正本は `app/src-tauri/icons/tsumiki.svg`。ここから `pnpm tauri icon` で各サイズを
+生成する。**生成物を直接編集しない。**
+
+- 白の角丸正方形（512 に対し radius 112）の中に、150×150・radius 36 のブロックを
+  **下2つ・上1つ**で積む
+- 下段は `#c4bdb5` と `#d8d2ca`、**上に載る1つだけ** `#d98324`
+- 積層バーと同じモチーフだが、**比率は揃えない**。積層バーは受信の件数を示す計器で
+  段数が変わる。アイコンは銘で、常に同じ形。24×8px の横長ブロックを縦に並べた形は
+  32px のトレイ表示でハンバーガーメニューに見えるため、積み木の形にしてある
+
 #### タスク行（Task Row）
 
 - 最小高 56px / padding 14px 18px / gap 14px / flex
@@ -325,6 +337,10 @@ tsumiki は Windows に常駐するローカル完結型のタスク管理ツー
 - フォント: [Inter](https://rsms.me/inter/)（SIL OFL）/ [Noto Sans JP](https://fonts.google.com/noto/specimen/Noto+Sans+JP)（SIL OFL）/ [JetBrains Mono](https://www.jetbrains.com/lp/mono/)（SIL OFL）
 
 ## 変更履歴
+
+- 2026-09-03: アプリアイコンを §4 に追加。積層バーと同じモチーフだが比率は揃えず、
+  下2つ・上1つの積み木にした。24×8px のブロックを縦に並べた形は 32px のトレイ表示で
+  ハンバーガーメニューに見えたため。計器（積層バー）と銘（アイコン）で役割が違う。
 
 - 2026-09-02: 捕捉小窓の呼び出しを `Ctrl + Shift + Space` から `Alt + Shift + Space` へ変更。
   実機で `Ctrl + Shift + Space` が他アプリに取られており登録できなかった。
